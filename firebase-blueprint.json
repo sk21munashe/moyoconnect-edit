@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "ContentItem": {
+      "title": "ContentItem",
+      "description": "A piece of psychoeducational resource content uploaded by administrators",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier of the resource"
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the resource"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Article", "Audio", "Video", "PDF"],
+          "description": "The type of media content"
+        },
+        "language": {
+          "type": "string",
+          "enum": ["English", "Shona", "Ndebele"],
+          "description": "The language of the resource"
+        },
+        "description": {
+          "type": "string",
+          "description": "Short introductory summary"
+        },
+        "date": {
+          "type": "string",
+          "description": "Date of creation or publication"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Published", "Draft", "Review"],
+          "description": "The current lifecycle phase of this content piece"
+        },
+        "views": {
+          "type": "integer",
+          "description": "Number of times this piece has been selected"
+        },
+        "author": {
+          "type": "string",
+          "description": "The author or care provider node submitting this content"
+        },
+        "imageUrl": {
+          "type": "string",
+          "description": "Image link override"
+        },
+        "tags": {
+          "type": "array",
+          "description": "Tags associated with the resource"
+        },
+        "bodyText": {
+          "type": "string",
+          "description": "Full text or transcript document of the resource"
+        }
+      },
+      "required": ["id", "title", "category", "language", "description", "status", "views", "author"]
+    },
+    "RegisteredMoyoUser": {
+      "title": "RegisteredMoyoUser",
+      "description": "A patient user registered using secure Firebase Authentication",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "language": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "assessmentAnswers": { "type": "object" }
+      },
+      "required": ["uid", "name", "email", "language"]
+    },
+    "ClientProfile": {
+      "title": "ClientProfile",
+      "description": "A synchronized clinical client record managed on the community health worker dashboard",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "riskLevel": { "type": "string" },
+        "lastVisit": { "type": "string" },
+        "nextStep": { "type": "string" },
+        "preferredLanguage": { "type": "string" },
+        "district": { "type": "string" },
+        "emotionalDistress": { "type": "integer" },
+        "activeModules": { "type": "array" },
+        "referralStatus": { "type": "object" },
+        "history": { "type": "array" },
+        "medications": { "type": "array" }
+      },
+      "required": ["id", "name", "district", "riskLevel"]
+    }
+  },
+  "firestore": {
+    "/moyo_content/{contentId}": {
+      "schema": "ContentItem",
+      "description": "Content uploaded via Admin Portal that is distributed to all users"
+    },
+    "/registered_moyo_users/{userId}": {
+      "schema": "RegisteredMoyoUser",
+      "description": "Registered Moyo Patient Users data schemas"
+    },
+    "/moyo_clients/{clientId}": {
+      "schema": "ClientProfile",
+      "description": "Community Health Worker directory of clients and clinical cases"
+    }
+  }
+}

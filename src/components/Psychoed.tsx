@@ -1,7 +1,23 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { PsychoedArticle } from "../types";
-import { BookOpen, Languages, Sparkles, ArrowRight, Smile, Heart, ThumbsUp, HelpCircle } from "lucide-react";
+import { 
+  BookOpen, 
+  Languages, 
+  Sparkles, 
+  ArrowRight, 
+  Smile, 
+  Heart, 
+  ThumbsUp, 
+  HelpCircle,
+  Play,
+  Pause,
+  Volume2,
+  FileText,
+  ExternalLink
+} from "lucide-react";
 import { motion } from "motion/react";
+import { collection, query, where, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
 
 const ARTICLES: PsychoedArticle[] = [
   {
@@ -75,6 +91,16 @@ const ARTICLES: PsychoedArticle[] = [
   }
 ];
 
+function getYouTubeId(url: string | undefined): string | null {
+  if (!url) return null;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  if (match && match[2].length === 11) {
+    return match[2];
+  }
+  return null;
+}
+
 interface PsychoedProps {
   onBackToHome: () => void;
   onOpenScreener: () => void;
@@ -85,6 +111,60 @@ export default function Psychoed({ onBackToHome, onOpenScreener }: PsychoedProps
     return (localStorage.getItem("moyo_lang") as "en" | "sn" | "nd") || "en";
   });
   const [activeArticleId, setActiveArticleId] = useState<string | null>(null);
+  const [playingAudioId, setPlayingAudioId] = useState<string | null>(null);
+  const [playingVideoId, setPlayingVideoId] = useState<string | null>(null);
+
+  const [adminArticles, setAdminArticles] = useState<any[]>(() => {
+    const saved = localStorage.getItem("moyo_admin_content");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved) as any[];
+        // Only load Published status nodes
+        return parsed.filter((item: any) => item.status === "Published");
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    const path = "moyo_content";
+    const q = query(collection(db, path), where("status", "==", "Published"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const dbItems: any[] = [];
+      snapshot.forEach((docRef) => {
+        dbItems.push(docRef.data());
+      });
+
+      // Get any local custom items that are Published
+      const saved = localStorage.getItem("moyo_admin_content");
+      let localPublished: any[] = [];
+      if (saved) {
+        try {
+          const parsed = JSON.parse(saved);
+          localPublished = parsed.filter((item: any) => item.status === "Published");
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      // Merge local items with database query items, preventing duplicates
+      const merged: any[] = [...dbItems];
+      localPublished.forEach((localItem) => {
+        const alreadyInDb = dbItems.some((dbItem) => dbItem.id === localItem.id);
+        if (!alreadyInDb) {
+          merged.unshift(localItem);
+        }
+      });
+
+      setAdminArticles(merged);
+    }, (error) => {
+      console.error("Firebase load error in Psychoeducation module:", error);
+    });
+
+    return () => unsubscribe();
+  }, []);
 
   const getTranslatedText = (key: string) => {
     const dict = {
@@ -93,7 +173,8 @@ export default function Psychoed({ onBackToHome, onOpenScreener }: PsychoedProps
       readMore: { en: "Read Article", sn: "Verenga Chinyorwa", nd: "Bala ugwadlo" },
       benchTitle: { en: "Moyo Digital Bench", sn: "Bhenji reRugare reMoyo", nd: "IBhenji yeMoyo" },
       benchText: { en: "Stressed right now? Get immediate support and feedback on your symptoms anonymously.", sn: "Wakanyanya kuremerwa pfungwa izvozvi? Tora ongororo unzwisise huremu hwazvo izvozvi zvakavanzika.", nd: "Uhlupheka namhla? Thatha ukuhlola kwethu okuyimfihlo ukuze uthole usizo." },
-      btnAction: { en: "Take anonymous screening", sn: "Tora ongororo pfungwa", nd: "Thatha ukuhlola manga" }
+      btnAction: { en: "Take anonymous screening", sn: "Tora ongororo pfungwa", nd: "Thatha ukuhlola manga" },
+      adminStaff: { en: "NGO Care Resource", sn: "Zvekubatsira kubva kuNGO", nd: "Usizo lwamalunga eNGO" }
     } as any;
     return dict[key]?.[lang] || dict[key]?.["en"] || "";
   };
@@ -154,64 +235,264 @@ export default function Psychoed({ onBackToHome, onOpenScreener }: PsychoedProps
 
       {/* Main Articles list */}
       <div className="space-y-4 mb-8">
-        {ARTICLES.map((art) => {
-          const isOpened = activeArticleId === art.id;
-          const currentTitle = lang === "sn" ? art.shonaTitle : lang === "nd" ? art.ndebeleTitle : art.title;
-          const currentContent = lang === "sn" ? art.shonaContent : lang === "nd" ? art.ndebeleContent : art.englishContent;
+        {(() => {
+          // Map standard clinical articles
+          const mappedStandard = ARTICLES.map((art) => ({
+            ...art,
+            isCustom: false,
+            author: "Moyo Clinical Board",
+            imageUrl: undefined
+          }));
 
-          return (
-            <div
-              key={art.id}
-              className={`bg-white rounded-2xl border transition-all overflow-hidden ${
-                isOpened ? "border-moyo-secondary shadow-sm" : "border-moyo-border/50 shadow-sm hover:border-moyo-border"
-              }`}
-            >
+          // Translate UI language identifier to admin portal naming
+          const mapLang = {
+            en: "English",
+            sn: "Shona",
+            nd: "Ndebele"
+          }[lang];
+
+          // Map dynamic published admin articles matching language
+          const mappedAdmin = adminArticles
+            .filter((art) => art.language === mapLang)
+            .map((art) => {
+              const paragraphs = art.bodyText ? art.bodyText.split("\n\n") : [art.description];
+              return {
+                id: art.id,
+                category: art.category,
+                title: art.title,
+                shonaTitle: art.title,
+                ndebeleTitle: art.title,
+                summary: art.description,
+                englishContent: paragraphs,
+                shonaContent: paragraphs,
+                ndebeleContent: paragraphs,
+                isCustom: true,
+                author: art.author || "Admin Staff Node",
+                imageUrl: art.imageUrl,
+                views: art.views,
+                tags: art.tags || []
+              };
+            });
+
+          const allArticles = [...mappedStandard, ...mappedAdmin];
+
+          return allArticles.map((art) => {
+            const isOpened = activeArticleId === art.id;
+            const currentTitle = lang === "sn" ? art.shonaTitle : lang === "nd" ? art.ndebeleTitle : art.title;
+            const currentContent = lang === "sn" ? art.shonaContent : lang === "nd" ? art.ndebeleContent : art.englishContent;
+
+            return (
               <div
-                onClick={() => setActiveArticleId(isOpened ? null : art.id)}
-                className="p-5 cursor-pointer flex justify-between gap-4 select-none items-start"
+                key={art.id}
+                className={`bg-white rounded-2xl border transition-all overflow-hidden ${
+                  isOpened ? "border-moyo-secondary shadow-sm" : "border-moyo-border/50 shadow-sm hover:border-moyo-border"
+                }`}
               >
-                <div>
-                  <div className="flex items-center gap-2 mb-2">
-                    <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 bg-moyo-secondary-container/30 text-moyo-on-secondary-container rounded-full tracking-wider">
-                      {art.category}
-                    </span>
-                    <span className="text-[10px] font-bold text-moyo-muted">• Culturally peer audited</span>
+                <div
+                  onClick={() => {
+                    setActiveArticleId(isOpened ? null : art.id);
+                    setPlayingAudioId(null);
+                    setPlayingVideoId(null);
+                  }}
+                  className="p-5 cursor-pointer flex gap-4 select-none items-start text-left"
+                >
+                  {(() => {
+                    const ytId = getYouTubeId(art.imageUrl) || 
+                                 (art.englishContent && typeof art.englishContent[0] === 'string' ? getYouTubeId(art.englishContent[0]) : null) ||
+                                 getYouTubeId(art.summary);
+                    const thumbUrl = ytId 
+                      ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` 
+                      : art.imageUrl;
+                    
+                    if (thumbUrl) {
+                      return (
+                        <div className="w-14 h-14 rounded-xl overflow-hidden shrink-0 bg-moyo-bg border border-moyo-border/10">
+                          <img src={thumbUrl} className="w-full h-full object-cover" alt="" referrerPolicy="no-referrer" />
+                        </div>
+                      );
+                    }
+                    return null;
+                  })()}
+
+                  <div className="flex-grow min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1.5">
+                      <span className="text-[10px] font-extrabold uppercase px-2.5 py-0.5 bg-moyo-secondary-container/30 text-moyo-on-secondary-container rounded-full tracking-wider">
+                        {art.category}
+                      </span>
+                      <span className="text-[10px] font-bold text-moyo-muted">
+                        • {art.isCustom ? `${getTranslatedText("adminStaff")} (${art.author})` : `Clinical Board`}
+                      </span>
+                    </div>
+                    <h3 className="text-md font-display font-bold text-moyo-primary leading-snug">
+                      {currentTitle}
+                    </h3>
+                    {!isOpened && (
+                      <p className="text-xs text-moyo-muted mt-2 line-clamp-2 leading-relaxed">
+                        {art.summary}
+                      </p>
+                    )}
                   </div>
-                  <h3 className="text-md font-display font-bold text-moyo-primary">
-                    {currentTitle}
-                  </h3>
-                  {!isOpened && (
-                    <p className="text-xs text-moyo-muted mt-2 line-clamp-2 leading-relaxed">
-                      {art.summary}
-                    </p>
-                  )}
+
+                  <button className="text-xs font-bold text-moyo-primary flex items-center shrink-0 mt-1 hover:underline">
+                    {isOpened ? "Close" : getTranslatedText("readMore")}
+                  </button>
                 </div>
-                <button className="text-xs font-bold text-moyo-primary flex items-center shrink-0 mt-1 hover:underline">
-                  {isOpened ? "Close" : getTranslatedText("readMore")}
-                </button>
+
+                {/* Expansion block */}
+                {isOpened && (
+                  <div className="px-5 pb-6 border-t border-moyo-bg pt-4 bg-moyo-bg/10">
+                    
+                    {/* Dynamic Custom Media Playback UI */}
+                    {art.isCustom && art.category === "Audio" && (
+                      <div className="bg-[#f0f7f4] border border-[#d2ebd9] rounded-xl p-4 mb-4">
+                        <div className="flex items-center gap-3">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setPlayingAudioId(playingAudioId === art.id ? null : art.id);
+                            }}
+                            className="w-10 h-10 rounded-full bg-moyo-primary flex items-center justify-center text-white hover:bg-moyo-primary/95 transition-all shadow-sm shrink-0 cursor-pointer"
+                          >
+                            {playingAudioId === art.id ? <Pause className="w-5 h-5 fill-white" /> : <Play className="w-5 h-5 fill-white ml-0.5" />}
+                          </button>
+                          <div className="min-w-0 flex-grow">
+                            <span className="block text-xs font-bold text-moyo-primary">Calming Breathwork Lesson</span>
+                            <span className="block text-[10px] text-moyo-muted">
+                              {playingAudioId === art.id ? "Playing guided audio..." : "Tap to play • 05:40 min duration"}
+                            </span>
+                          </div>
+                          <Volume2 className="w-4 h-4 text-moyo-secondary shrink-0" />
+                        </div>
+                        {playingAudioId === art.id && (
+                          <div className="mt-3 space-y-1">
+                            <div className="w-full bg-moyo-border/30 h-1.5 rounded-full overflow-hidden">
+                              <motion.div 
+                                initial={{ width: "0%" }}
+                                animate={{ width: "100%" }}
+                                transition={{ duration: 340, ease: "linear" }}
+                                className="bg-moyo-secondary h-full"
+                              />
+                            </div>
+                            <div className="flex justify-between text-[9px] text-moyo-muted">
+                              <span>0:00</span>
+                              <span>5:40</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {art.isCustom && art.category === "Video" && (() => {
+                      const ytId = getYouTubeId(art.imageUrl) || 
+                                   (art.englishContent && typeof art.englishContent[0] === 'string' ? getYouTubeId(art.englishContent[0]) : null) ||
+                                   getYouTubeId(art.summary);
+                      const isPlaying = playingVideoId === art.id;
+
+                      if (isPlaying) {
+                        if (ytId) {
+                          return (
+                            <div className="relative rounded-xl overflow-hidden aspect-video mb-4 border border-moyo-border shadow-xs bg-black">
+                              <iframe 
+                                src={`https://www.youtube.com/embed/${ytId}?autoplay=1`}
+                                title={art.title}
+                                frameBorder="0"
+                                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                                allowFullScreen
+                                className="w-full h-full absolute inset-0"
+                              />
+                            </div>
+                          );
+                        } else {
+                          // Check if imageUrl looks like a valid direct video link
+                          const videoUrl = art.imageUrl && art.imageUrl.startsWith("http") ? art.imageUrl : null;
+                          if (videoUrl) {
+                            return (
+                              <div className="relative rounded-xl overflow-hidden aspect-video mb-4 border border-moyo-border shadow-xs bg-black">
+                                <video 
+                                  src={videoUrl}
+                                  controls
+                                  autoPlay
+                                  className="w-full h-full object-contain"
+                                />
+                              </div>
+                            );
+                          }
+                        }
+                      }
+
+                      // Else show thumbnail/play preview
+                      const displayThumb = ytId 
+                        ? `https://img.youtube.com/vi/${ytId}/hqdefault.jpg` 
+                        : (art.imageUrl && !art.imageUrl.includes("youtube.com") && !art.imageUrl.includes("youtu.be") ? art.imageUrl : "https://images.unsplash.com/photo-1544367567-0f2fcb009e0b");
+
+                      return (
+                        <div className="relative rounded-xl overflow-hidden bg-black/90 aspect-video mb-4 flex items-center justify-center border border-moyo-border shadow-xs group">
+                          <img 
+                            src={displayThumb} 
+                            className="absolute inset-0 w-full h-full object-cover opacity-50 group-hover:scale-105 transition-transform duration-700" 
+                            alt="" 
+                            referrerPolicy="no-referrer"
+                          />
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (ytId || (art.imageUrl && art.imageUrl.startsWith("http"))) {
+                                setPlayingVideoId(art.id);
+                              } else {
+                                alert(`Video resource not found. Setup direct link or YouTube URL: ${art.title}`);
+                              }
+                            }}
+                            className="relative z-10 w-12 h-12 rounded-full bg-moyo-secondary flex items-center justify-center text-white shadow-lg group-hover:scale-110 transition-transform active:scale-95 cursor-pointer"
+                          >
+                            <Play className="w-6 h-6 fill-white ml-0.5" />
+                          </button>
+                          <span className="absolute bottom-2.5 left-2.5 bg-black/60 text-white text-[9px] px-2 py-0.5 rounded font-black tracking-wide uppercase">
+                            {ytId ? "YouTube Lesson • Click to play" : "Lesson video • CHW audit v1.0"}
+                          </span>
+                        </div>
+                      );
+                    })()}
+
+                    {art.isCustom && art.category === "PDF" && (
+                      <div className="bg-[#f0f4f7] border border-[#d2dee5] rounded-xl p-4 mb-4 flex items-center justify-between gap-4">
+                        <div className="flex items-center gap-3">
+                          <FileText className="w-8 h-8 text-moyo-primary shrink-0" />
+                          <div>
+                            <span className="block text-xs font-bold text-moyo-primary">Clinical Field Reference PDF</span>
+                            <span className="block text-[10px] text-moyo-muted">Compiled for NGOs and peer health supporters • 1.2MB</span>
+                          </div>
+                        </div>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            alert(`Opening document: ${art.title}`);
+                          }}
+                          className="py-1.5 px-3 bg-white hover:bg-[#ebf0f3] border border-moyo-border/60 text-xs font-bold text-moyo-primary rounded-lg flex items-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <ExternalLink className="w-3.5 h-3.5" /> Open File
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="space-y-4 text-sm text-moyo-muted leading-relaxed">
+                      {currentContent.map((paragraph, index) => (
+                        <p key={index}>{paragraph}</p>
+                      ))}
+                    </div>
+
+                    <div className="mt-6 flex gap-3 items-center border-t border-moyo-border/30 pt-4">
+                      <span className="text-xs font-bold text-moyo-primary">{lang === "en" ? "Was this helpful?" : "Izvi zvakubatsirai?"}</span>
+                      <button className="py-1 px-3 bg-white border border-moyo-border/60 text-xs text-moyo-primary rounded-lg flex items-center gap-1.5 hover:bg-moyo-bg cursor-pointer">
+                        <ThumbsUp className="w-3.5 h-3.5 text-moyo-secondary" />
+                        Yees / Hongu
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
-
-              {/* Expansion block */}
-              {isOpened && (
-                <div className="px-5 pb-6 border-t border-moyo-bg pt-4 bg-moyo-bg/10">
-                  <div className="space-y-4 text-sm text-moyo-muted leading-relaxed">
-                    {currentContent.map((paragraph, index) => (
-                      <p key={index}>{paragraph}</p>
-                    ))}
-                  </div>
-
-                  <div className="mt-6 flex gap-3 items-center border-t border-moyo-border/30 pt-4">
-                    <span className="text-xs font-bold text-moyo-primary">{lang === "en" ? "Was this helpful?" : "Izvi zvakubatsirai?"}</span>
-                    <button className="py-1 px-3 bg-white border border-moyo-border/60 text-xs text-moyo-primary rounded-lg flex items-center gap-1.5 hover:bg-moyo-bg cursor-pointer">
-                      <ThumbsUp className="w-3.5 h-3.5 text-moyo-secondary" />
-                      Yees / Hongu
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          );
-        })}
+            );
+          });
+        })()}
       </div>
 
       {/* Embedded Action Bench Callout */}

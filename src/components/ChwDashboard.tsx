@@ -31,6 +31,9 @@ import {
   Send
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
+import ZimbabweMap from "./ZimbabweMap";
 
 interface ChwDashboardProps {
   chwId: string;
@@ -63,155 +66,119 @@ interface ClientProfile {
   medications?: string[];
 }
 
-const INITIAL_CLIENTS: ClientProfile[] = [
-  {
-    id: "1",
-    name: "Kudakwashe Moyo",
-    code: "#8821",
-    riskLevel: "Moderate",
-    lastVisit: "Oct 24, 2023",
-    nextStep: "Well-being Check",
-    preferredLanguage: "Shona",
-    district: "Seke District, Chitungwiza",
-    emotionalDistress: 68,
-    activeModules: [
-      { name: "CBT Fundamentals", progress: 75, icon: "psychology", color: "bg-secondary text-on-secondary" },
-      { name: "Hygiene Support", progress: 25, icon: "health_and_safety", color: "bg-primary text-on-primary" }
-    ],
-    referralStatus: {
-      title: "Referral to Seke Central Clinic is active for physical evaluation.",
-      subtitle: "Pending visit",
-      status: "Approved"
-    },
-    history: [
-      {
-        id: "h1-1",
-        type: "visit",
-        title: "Home Visit Completed",
-        date: "Oct 24, 2023",
-        description: "Client reported improved mood after initial module completion. Observed stable living environment. Medication adherence confirmed.",
-        tags: ["STABLE", "VISIT #4"]
-      },
-      {
-        id: "h1-2",
-        type: "screening",
-        title: "Digital Screening: PHQ-9",
-        date: "Oct 18, 2023",
-        description: "Score: 14 (Moderate). Notable flags in sleep patterns and concentration. Client completed screening via SMS module."
-      },
-      {
-        id: "h1-3",
-        type: "note",
-        title: "CHW Observation",
-        date: "Oct 12, 2023",
-        description: "Client expressed concern about upcoming seasonal changes affecting crop yield. Potential external stressor identified."
-      }
-    ],
-    medications: ["Propanolot 20mg daily", "Folic Acid"]
-  },
-  {
-    id: "2",
-    name: "Tariro Moyo",
-    code: "#MZ-9921",
-    riskLevel: "Severe",
-    lastVisit: "2 days ago",
-    nextStep: "Psychological Referral",
-    preferredLanguage: "Shona",
-    district: "Bulawayo Central",
-    emotionalDistress: 88,
-    activeModules: [
-      { name: "CBT Fundamentals", progress: 80, icon: "psychology", color: "bg-secondary text-on-secondary" }
-    ],
-    referralStatus: {
-      title: "Mental Health Escalation to Bulawayo General.",
-      subtitle: "Urgent check required",
-      status: "Pending"
-    },
-    history: [
-      {
-        id: "h2-1",
-        type: "escalation",
-        title: "Clinical Escalation Issued",
-        date: "2 days ago",
-        description: "High Distress levels identified during the weekly questionnaire. Automatic clinical route flagged.",
-        tags: ["HIGH DISTRESS", "URGENT"]
-      },
-      {
-        id: "h2-2",
-        type: "screening",
-        title: "Crisis Screener Alert",
-        date: "3 days ago",
-        description: "Alarming response regarding sleep disruption and continuous cognitive overwhelm."
-      }
-    ],
-    medications: ["Fluoxetine 20mg"]
-  },
-  {
-    id: "3",
-    name: "Kumbirai Sibanda",
-    code: "#MZ-8812",
-    riskLevel: "Moderate",
-    lastVisit: "1 week ago",
-    nextStep: "Well-being Check",
-    preferredLanguage: "Ndebele",
-    district: "Seke District, Chitungwiza",
-    emotionalDistress: 55,
-    activeModules: [
-      { name: "CBT Fundamentals", progress: 40, icon: "psychology", color: "bg-secondary" }
-    ],
-    referralStatus: {
-      title: "Community Clinic Referral is scheduled.",
-      subtitle: "Scheduled for Friday",
-      status: "Pending"
-    },
-    history: [
-      {
-        id: "h3-1",
-        type: "visit",
-        title: "Initial Home Visit",
-        date: "1 week ago",
-        description: "Good initial contact. Handed over local Shona/Ndebele health material packets.",
-        tags: ["INTRO"]
-      }
-    ],
-    medications: []
-  },
-  {
-    id: "4",
-    name: "Blessing Zhou",
-    code: "#MZ-4401",
-    riskLevel: "Mild",
-    lastVisit: "3 weeks ago",
-    nextStep: "Routine Screening",
-    preferredLanguage: "Shona",
-    district: "Bulawayo Ward 4",
-    emotionalDistress: 20,
-    activeModules: [
-      { name: "Psychoeducation Modules", progress: 100, icon: "school", color: "bg-secondary" }
-    ],
-    referralStatus: {
-      title: "No active referrals required.",
-      subtitle: "Self-help focus",
-      status: "None"
-    },
-    history: [
-      {
-        id: "h4-1",
-        type: "visit",
-        title: "Routine Check-in",
-        date: "3 weeks ago",
-        description: "Client expresses stable social life. Fully engaged in community farm projects.",
-        tags: ["HEALTHY", "STABLE"]
-      }
-    ],
-    medications: []
-  }
-];
+const INITIAL_CLIENTS: ClientProfile[] = [];
 
 export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
-  const [clients, setClients] = useState<ClientProfile[]>(INITIAL_CLIENTS);
+  const [clients, setClients] = useState<ClientProfile[]>(() => {
+    const saved = localStorage.getItem("moyo_chw_clients");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        return parsed.filter((item: any) => !["1", "2", "3", "4"].includes(item.id));
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [];
+  });
   const [selectedClientId, setSelectedClientId] = useState<string | null>(null);
   
+  // Real-time synchronization with Firestore and Local Registered Users
+  React.useEffect(() => {
+    const path = "moyo_clients";
+    const unsubscribe = onSnapshot(collection(db, path), (snapshot) => {
+      const dbItems: ClientProfile[] = [];
+      snapshot.forEach((docRef) => {
+        dbItems.push(docRef.data() as ClientProfile);
+      });
+
+      const cleanedDbItems = dbItems.filter(item => !["1", "2", "3", "4"].includes(item.id));
+
+      setClients((prevClients) => {
+        const mergedList = [...prevClients].filter(c => !["1", "2", "3", "4"].includes(c.id));
+
+        // 1. Sync items from Firestore DB
+        cleanedDbItems.forEach((dbItem) => {
+          const idx = mergedList.findIndex((item) => item.id === dbItem.id);
+          if (idx > -1) {
+            mergedList[idx] = dbItem;
+          } else {
+            mergedList.push(dbItem);
+          }
+        });
+
+        // 2. Scan locally registered users from patient logins
+        const savedUsersJSON = localStorage.getItem("registered_moyo_users");
+        if (savedUsersJSON) {
+          try {
+            const localUsers = JSON.parse(savedUsersJSON) as any[];
+            localUsers.forEach((u) => {
+              const userId = `u-${u.name.toLowerCase().replace(/\s+/g, "-") || Date.now()}`;
+              const existsInMerged = mergedList.some((c) => c.name.toLowerCase() === u.name.toLowerCase());
+              if (!existsInMerged) {
+                let score = 0;
+                if (u.assessmentAnswers) {
+                  score = (u.assessmentAnswers.mood || 0) + (u.assessmentAnswers.anxiety || 0);
+                }
+                const riskLevel: "Mild" | "Moderate" | "Severe" = score >= 5 ? "Severe" : score >= 3 ? "Moderate" : "Mild";
+                const langMap: Record<string, string> = { en: "English", sn: "Shona", nd: "Ndebele" };
+                const newClient: ClientProfile = {
+                  id: userId,
+                  name: u.name,
+                  code: `#MZ-${Math.floor(1000 + Math.random() * 9000)}`,
+                  riskLevel,
+                  lastVisit: "Registered",
+                  nextStep: "Initial Support Contact",
+                  preferredLanguage: langMap[u.language] || "English",
+                  district: "Seke District, Chitungwiza",
+                  emotionalDistress: riskLevel === "Severe" ? 85 : riskLevel === "Moderate" ? 50 : 15,
+                  activeModules: [
+                    { name: "CBT Fundamentals", progress: 0, icon: "psychology", color: "bg-secondary text-on-secondary" }
+                  ],
+                  referralStatus: {
+                    title: "Registered on patient login portal.",
+                    subtitle: "Intake complete",
+                    status: "None"
+                  },
+                  history: [
+                    {
+                      id: `h-user-${Date.now()}-${userId}`,
+                      type: "screening",
+                      title: "Digital Intake Completed",
+                      date: u.timestamp ? new Date(u.timestamp).toLocaleDateString() : "Today",
+                      description: `Form submitted with rating assessment. Mood/Anxiety stress score of ${score}/6.`,
+                      tags: ["INTAKE", "NEW"]
+                    }
+                  ],
+                  medications: []
+                };
+
+                // Auto write to firebase
+                setDoc(doc(db, path, newClient.id), newClient)
+                  .catch(err => console.error(err));
+
+                mergedList.push(newClient);
+              }
+            });
+          } catch (e) {
+            console.error(e);
+          }
+        }
+
+        return mergedList;
+      });
+    }, (error) => {
+      console.error(error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Save clients locally to maintain persistent offline fallback
+  React.useEffect(() => {
+    localStorage.setItem("moyo_chw_clients", JSON.stringify(clients));
+  }, [clients]);
+
   // Searching & Filtering Directory
   const [searchQuery, setSearchQuery] = useState("");
   const [riskFilter, setRiskFilter] = useState<"All" | "Mild" | "Moderate" | "Severe">("All");
@@ -275,8 +242,9 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
     if (!newClientName.trim()) return;
 
     const randomIdNum = Math.floor(1000 + Math.random() * 9000);
+    const newId = `c-${Date.now()}`;
     const newClient: ClientProfile = {
-      id: String(clients.length + 1),
+      id: newId,
       name: newClientName,
       code: `#MZ-${randomIdNum}`,
       riskLevel: newClientRisk,
@@ -306,10 +274,18 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
       medications: []
     };
 
-    setClients([newClient, ...clients]);
+    setDoc(doc(db, "moyo_clients", newClient.id), newClient)
+      .then(() => {
+        setClients([newClient, ...clients.filter(c => c.id !== newClient.id)]);
+        triggerManualSync();
+      })
+      .catch((err) => {
+        console.error(err);
+        setClients([newClient, ...clients]);
+      });
+
     setNewClientName("");
     setShowAddClientModal(false);
-    triggerManualSync();
   };
 
   // Perform: Record Visit
@@ -317,27 +293,33 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
     e.preventDefault();
     if (!selectedClientId || !visitNotes.trim()) return;
 
-    setClients(prevClients => 
-      prevClients.map(c => {
-        if (c.id === selectedClientId) {
-          const newHistoryItem: CareHistoryItem = {
-            id: `h-visit-${Date.now()}`,
-            type: "visit",
-            title: visitType + " Completed",
-            date: "Today",
-            description: visitNotes,
-            tags: [visitStatusTag, "VISIT"]
-          };
-          return {
-            ...c,
-            lastVisit: "Just now",
-            nextStep: "Assess ongoing modules",
-            history: [newHistoryItem, ...c.history]
-          };
-        }
-        return c;
+    const clientToUpdate = clients.find(c => c.id === selectedClientId);
+    if (!clientToUpdate) return;
+
+    const newHistoryItem: CareHistoryItem = {
+      id: `h-visit-${Date.now()}`,
+      type: "visit",
+      title: visitType + " Completed",
+      date: "Today",
+      description: visitNotes,
+      tags: [visitStatusTag, "VISIT"]
+    };
+
+    const updatedClient: ClientProfile = {
+      ...clientToUpdate,
+      lastVisit: "Just now",
+      nextStep: "Assess ongoing modules",
+      history: [newHistoryItem, ...clientToUpdate.history]
+    };
+
+    setDoc(doc(db, "moyo_clients", selectedClientId), updatedClient)
+      .then(() => {
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
       })
-    );
+      .catch((err) => {
+        console.error(err);
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
+      });
 
     setVisitNotes("");
     setShowRecordVisitModal(false);
@@ -348,32 +330,38 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
     e.preventDefault();
     if (!selectedClientId) return;
 
-    setClients(prevClients => 
-      prevClients.map(c => {
-        if (c.id === selectedClientId) {
-          const newHistoryItem: CareHistoryItem = {
-            id: `h-esc-${Date.now()}`,
-            type: "escalation",
-            title: "Urgent Case Escalation Requested",
-            date: "Today",
-            description: `CHW initiated escalation to ${escalationFacility}. Reason: ${escalationReason || "High risk concerns."}`,
-            tags: ["ESCALATED", "CRITICAL"]
-          };
-          return {
-            ...c,
-            riskLevel: "Severe",
-            emotionalDistress: Math.max(c.emotionalDistress, 90),
-            referralStatus: {
-              title: `Referral to ${escalationFacility} has been elevated with medical dispatch.`,
-              subtitle: "Urgent Action Required",
-              status: "Approved"
-            },
-            history: [newHistoryItem, ...c.history]
-          };
-        }
-        return c;
+    const clientToUpdate = clients.find(c => c.id === selectedClientId);
+    if (!clientToUpdate) return;
+
+    const newHistoryItem: CareHistoryItem = {
+      id: `h-esc-${Date.now()}`,
+      type: "escalation",
+      title: "Urgent Case Escalation Requested",
+      date: "Today",
+      description: `CHW initiated escalation to ${escalationFacility}. Reason: ${escalationReason || "High risk concerns."}`,
+      tags: ["ESCALATED", "CRITICAL"]
+    };
+
+    const updatedClient: ClientProfile = {
+      ...clientToUpdate,
+      riskLevel: "Severe",
+      emotionalDistress: Math.max(clientToUpdate.emotionalDistress, 90),
+      referralStatus: {
+        title: `Referral to ${escalationFacility} has been elevated with medical dispatch.`,
+        subtitle: "Urgent Action Required",
+        status: "Approved"
+      },
+      history: [newHistoryItem, ...clientToUpdate.history]
+    };
+
+    setDoc(doc(db, "moyo_clients", selectedClientId), updatedClient)
+      .then(() => {
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
       })
-    );
+      .catch((err) => {
+        console.error(err);
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
+      });
 
     setEscalationReason("");
     setShowEscalateModal(false);
@@ -384,26 +372,32 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
     e.preventDefault();
     if (!selectedClientId || !followUpDate) return;
 
-    setClients(prevClients => 
-      prevClients.map(c => {
-        if (c.id === selectedClientId) {
-          const newHistoryItem: CareHistoryItem = {
-            id: `h-schedule-${Date.now()}`,
-            type: "note",
-            title: "Follow-up Scheduled",
-            date: "Scheduled on " + followUpDate,
-            description: `Future appointment booked. Agenda notes: ${followUpNotes || "General wellbeing check-in."}`,
-            tags: ["BOOKED"]
-          };
-          return {
-            ...c,
-            nextStep: "Home Visit (" + followUpDate + ")",
-            history: [newHistoryItem, ...c.history]
-          };
-        }
-        return c;
+    const clientToUpdate = clients.find(c => c.id === selectedClientId);
+    if (!clientToUpdate) return;
+
+    const newHistoryItem: CareHistoryItem = {
+      id: `h-schedule-${Date.now()}`,
+      type: "note",
+      title: "Follow-up Scheduled",
+      date: "Scheduled on " + followUpDate,
+      description: `Future appointment booked. Agenda notes: ${followUpNotes || "General wellbeing check-in."}`,
+      tags: ["BOOKED"]
+    };
+
+    const updatedClient: ClientProfile = {
+      ...clientToUpdate,
+      nextStep: "Home Visit (" + followUpDate + ")",
+      history: [newHistoryItem, ...clientToUpdate.history]
+    };
+
+    setDoc(doc(db, "moyo_clients", selectedClientId), updatedClient)
+      .then(() => {
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
       })
-    );
+      .catch((err) => {
+        console.error(err);
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
+      });
 
     setFollowUpDate("");
     setFollowUpNotes("");
@@ -415,34 +409,40 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
     e.preventDefault();
     if (!selectedClientId || !newMedName.trim()) return;
 
-    setClients(prevClients => 
-      prevClients.map(c => {
-        if (c.id === selectedClientId) {
-          const updatedMeds = c.medications ? [...c.medications, newMedName] : [newMedName];
-          const newHistoryItem: CareHistoryItem = {
-            id: `h-med-${Date.now()}`,
-            type: "log",
-            title: "Medication Update Logged",
-            date: "Today",
-            description: `Added "${newMedName}" to current active medical chart. Tested compliance checks.`,
-            tags: ["MED"]
-          };
-          return {
-            ...c,
-            medications: updatedMeds,
-            history: [newHistoryItem, ...c.history]
-          };
-        }
-        return c;
+    const clientToUpdate = clients.find(c => c.id === selectedClientId);
+    if (!clientToUpdate) return;
+
+    const updatedMeds = clientToUpdate.medications ? [...clientToUpdate.medications, newMedName] : [newMedName];
+    const newHistoryItem: CareHistoryItem = {
+      id: `h-med-${Date.now()}`,
+      type: "log",
+      title: "Medication Update Logged",
+      date: "Today",
+      description: `Added "${newMedName}" to current active medical chart. Tested compliance checks.`,
+      tags: ["MED"]
+    };
+
+    const updatedClient: ClientProfile = {
+      ...clientToUpdate,
+      medications: updatedMeds,
+      history: [newHistoryItem, ...clientToUpdate.history]
+    };
+
+    setDoc(doc(db, "moyo_clients", selectedClientId), updatedClient)
+      .then(() => {
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
       })
-    );
+      .catch((err) => {
+        console.error(err);
+        setClients(prev => prev.map(c => c.id === selectedClientId ? updatedClient : c));
+      });
 
     setNewMedName("");
     setShowMedicationModal(false);
   };
 
   // General counts for dashboard summary stats
-  const pendingVisitsCount = riskFilter === "All" ? 12 : filteredClients.filter(c => c.riskLevel !== "Mild").length * 3;
+  const pendingVisitsCount = clients.filter(c => c.riskLevel !== "Mild").length;
   const highRiskCount = clients.filter(c => c.riskLevel === "Severe").length;
 
   return (
@@ -477,7 +477,7 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
           )}
           <div className="flex items-center gap-3">
             <img 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBJyQWBkHsQWOYHyCy0X6uVyw4fXXgI10v770peXr5kUjeo8KnKJ6_P1r1eBBvgU3YzKluEWo3jEWVvDmhbMeA_0jnq4Cumkm3di82dQJ9QOfq6pUPyGSKCEEc3N0q21X5aBCccUCoK-AdnilK19GZc8iPXh1cooMyga_ZBIRApoPbYZeq0gL2L18-h5BYSyF4rnSWk4RBifBtvf-nrYON2rc5cmoVuN1NJmobMrISaCp0-ipuBanBPJZ3l0C8Gq06-0qSHlS-NVpWu" 
+              src="/src/assets/images/moyoconnect_logo_1779856207318.png" 
               alt="MoyoConnect Logo" 
               className="h-9 w-auto object-contain"
               referrerPolicy="no-referrer"
@@ -729,31 +729,19 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
             <div className="p-4 text-center border-t border-[#c2c7cc] bg-[#f8f9fa] text-xs font-bold text-[#002434]">
               Showing {filteredClients.length} of {clients.length} peer profiles in current micro-cell directory.
             </div>
+          </section>          {/* Live Interactive GIS Map of Zimbabwe Health Centers */}
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Map className="w-5 h-5 text-[#386934]" />
+              <h3 className="text-[#002434] text-sm font-black uppercase tracking-wider">
+                Zimbabwe Healthcare Clinics & Referral Centers Live GIS Portal
+              </h3>
+            </div>
+            <ZimbabweMap heightClass="h-[420px]" />
           </section>
 
-          {/* Area map and recent logs section */}
-          <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {/* Map representation component */}
-            <div className="bg-white border border-[#c2c7cc] rounded-2xl p-5 shadow-xs">
-              <h3 className="text-[#002434] text-xs font-black uppercase tracking-wider mb-3 flex items-center gap-2">
-                <Map className="w-4 h-4 text-[#386934]" />
-                Seke Community Sector Map
-              </h3>
-              <div className="aspect-video bg-[#edeeef] rounded-xl overflow-hidden relative group border border-[#c2c7cc]/50">
-                <img 
-                  src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuzAXZvJO32Op6je3IKoXA43-c2gUbj6bqULPD64WWMdFRzjF8P9klYucJoLWVzuIsDyTpCKduVFS0GlqttKgvNxnHPNPMx26XYGW2KDrTStc0Sldz9pL1GMSYLhJwwCnuGYv1gcumFelxzDi13dfr_G-4zZbw13uH6UarbxEXz7QPZ4-pVKnjA-jaIWCHR_Yl9L05hW0Tp9Epe1-l1Z-rKJBvQ7X86ufWo20M5bDkGD31XIbQ4a0DnMeRfywei90aytfPeOof_Aes" 
-                  alt="Sector Local Map" 
-                  className="w-full h-full object-cover select-none pointer-events-none"
-                  referrerPolicy="no-referrer"
-                />
-                <div className="absolute inset-0 bg-[#002434]/5 mix-blend-multiply pointer-events-none" />
-                <div className="absolute top-3 left-3 bg-white/90 backdrop-blur-md border border-[#c2c7cc]/60 py-1.5 px-3 rounded-lg text-[10px] font-extrabold text-[#002434] flex items-center gap-1.5">
-                  <MapPin className="w-3.5 h-3.5 text-[#386934]" />
-                  <span>Seke Sector 4 Dispatch</span>
-                </div>
-              </div>
-            </div>
-
+          {/* Recent Operations log and activity cards section */}
+          <section className="grid grid-cols-1 gap-4">
             {/* Recent raw activities feed */}
             <div className="bg-white border border-[#c2c7cc] rounded-2xl p-5 shadow-xs flex flex-col justify-between">
               <div>
@@ -980,22 +968,28 @@ export default function ChwDashboard({ chwId, onLogout }: ChwDashboardProps) {
               
               {/* Seke Hub Locator Waypoint Component */}
               <div className="bg-white border border-[#c2c7cc] rounded-2xl overflow-hidden shadow-xs">
-                <div className="h-32 bg-[#edeeef] relative">
-                  <img 
-                    src="https://lh3.googleusercontent.com/aida-public/AB6AXuAuzAXZvJO32Op6je3IKoXA43-c2gUbj6bqULPD64WWMdFRzjF8P9klYucJoLWVzuIsDyTpCKduVFS0GlqttKgvNxnHPNPMx26XYGW2KDrTStc0Sldz9pL1GMSYLhJwwCnuGYv1gcumFelxzDi13dfr_G-4zZbw13uH6UarbxEXz7QPZ4-pVKnjA-jaIWCHR_Yl9L05hW0Tp9Epe1-l1Z-rKJBvQ7X86ufWo20M5bDkGD31XIbQ4a0DnMeRfywei90aytfPeOof_Aes" 
-                    alt="GPS mini map route context" 
-                    className="w-full h-full object-cover select-none pointer-events-none"
-                    referrerPolicy="no-referrer"
-                  />
-                  <div className="absolute inset-0 bg-[#002434]/25" />
-                  <div className="absolute bottom-3 left-3 flex items-center gap-1.5 text-white bg-black/40 backdrop-blur-md py-1 px-2.5 rounded-md text-[10px] font-bold">
-                    <MapPin className="w-3.5 h-3.5 text-[#b9f1ad]" />
-                    <span>Seke Hub sector point #4</span>
-                  </div>
+                <div className="p-3 bg-neutral-50 border-b border-[#c2c7cc]/50 flex justify-between items-center">
+                  <span className="text-[10px] font-black uppercase text-[#72787c] tracking-wider">Referral GPS Context</span>
+                  <span className="text-[10px] font-black text-[#386934]">Live GIS</span>
                 </div>
+                <ZimbabweMap 
+                  heightClass="h-44" 
+                  singleClinicFocus={(() => {
+                    if (!selectedClient) return null;
+                    const d = selectedClient.district.toLowerCase();
+                    if (d.includes("bulawayo")) {
+                      return { id: "c-mpilo-central", name: "Mpilo Central Hospital", lat: -20.1264, lng: 28.5684, city: "Bulawayo", type: "National Referral Hospital", contacts: "+263 292 212011" };
+                    }
+                    return { id: "c-seke-north", name: "Seke North Clinic", lat: -18.0069, lng: 31.0772, city: "Chitungwiza", type: "District Clinic", contacts: "+263 270 31055" };
+                  })()} 
+                />
                 <div className="p-4">
                   <button 
-                    onClick={() => alert("Launching secure navigation vectors out into Shona community coordinates...")}
+                    onClick={() => {
+                      const lat = selectedClient?.district.toLowerCase().includes("bulawayo") ? -20.1264 : -18.0069;
+                      const lng = selectedClient?.district.toLowerCase().includes("bulawayo") ? 28.5684 : 31.0772;
+                      alert(`Opening secure navigation vector in Zimbabwe coordinates: [${lat}, ${lng}]. Dispatch ready!`);
+                    }}
                     className="w-full py-2 bg-[#f3f4f5] hover:bg-[#e7e8e9] border border-[#c2c7cc] rounded-lg text-xs font-bold text-[#002434] flex items-center justify-center gap-2 cursor-pointer transition select-none"
                   >
                     <Compass className="w-4 h-4" />

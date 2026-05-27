@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { 
   Users, 
   Search, 
@@ -37,12 +37,26 @@ import {
   ExternalLink,
   FolderOpen,
   CheckCircle,
-  AlertTriangle
+  AlertTriangle,
+  Volume2
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { collection, doc, setDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged, User as FirebaseUser } from "firebase/auth";
+import { db, auth, handleFirestoreError, OperationType } from "../firebase";
 
 interface AdminPortalProps {
   onLogout: () => void;
+}
+
+function getYouTubeThumb(url: string | undefined): string | null {
+  if (!url) return null;
+  const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
+  const match = url.match(regExp);
+  if (match && match[2].length === 11) {
+    return `https://img.youtube.com/vi/${match[2]}/hqdefault.jpg`;
+  }
+  return null;
 }
 
 interface ContentItem {
@@ -57,66 +71,91 @@ interface ContentItem {
   author: string;
   imageUrl?: string;
   tags: string[];
+  bodyText?: string;
 }
 
-const INITIAL_CONTENT: ContentItem[] = [
-  {
-    id: "cnt-101",
-    title: "Managing Anxiety through Cognitive Reframing",
-    category: "Article",
-    language: "English",
-    description: "A comprehensive guide designed for Community Health Workers to assist refugees in identifying and challenging negative thought patterns.",
-    date: "Oct 12, 2024",
-    status: "Published",
-    views: 1240,
-    author: "Dr. Sibanda",
-    imageUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuBhoc9Q04t7uhqsiVVs710-zyvBJpPavZrhzpUFYiKwa9W67CjWWVgmk1DSqQbMkaHyipW2T76pwPqJ1tZLWvuquKgOw6Q1xbHTOg6MmDiI8Sg6aCiyloI5d7bAMQLj2spXgdgq7IVXEEanasne3UurvjKUIuz9QNBAxKB5CTD81zPMxbuQ-0j538ctekzrIId5TnseGsTk58DmBfSjtB40-2C7n2R_BWJ3ji0uA7eVOmzyIPqzABMaLGe1SwzXVssjyZdW3OgEh42H",
-    tags: ["mentalhealth", "refugees", "CBT"]
-  },
-  {
-    id: "cnt-102",
-    title: "5 Daily Mindfulness Exercises",
-    category: "Audio",
-    language: "Shona",
-    description: "Simple five-minute guided relaxation files focusing on diaphragmatic respiratory control and grounding techniques.",
-    date: "Nov 02, 2024",
-    status: "Published",
-    views: 890,
-    author: "Moyo Nurse Station",
-    imageUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuBBvmF2my4ALVvl6xrHgE7c42Or7T5QLIrqMwcpgcfl0_3ZoYfxZFquXvhstVD9t5yHJm-mT7naNzfPR8NsSmPxeI5yWSSzbrOld_9-xdJ35hOVlFeRjlXhpms8mCV_wO0msbP6FReAJgSDo_wRoJhrupdKKYJolQwRnLdNW4FovBGmUB7eYMQHHuUvNq_5GQxcgSkNmh0nmVIjnKUdBhy1DD5VflAr8eXj-nqMniGqWEX_f9EhZvI68cf6nAt7rSzUiBV6sEb8TDdp",
-    tags: ["selfhelp", "meditation", "breathwork"]
-  },
-  {
-    id: "cnt-103",
-    title: "Trauma-Informed Care Protocol v2.1",
-    category: "PDF",
-    language: "English",
-    description: "Clinical field guidelines for NGO humanitarian aid workers. Recommended procedures for acute psychiatric support and ethical de-escalation.",
-    date: "Oct 21, 2024",
-    status: "Review",
-    views: 110,
-    author: "Clinician Committee",
-    imageUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuCAHlmPX4ReJ0LwASKh_ML7eYbRocacf82TzRHLB6Mty7h4Z18I_q7Hjuz1ZY_DVd9GKBQNJT2k9HjqimMLW6bIgtBr6PSUSBTECIDVj3BkeObaBgzn5S91_VydoQA_8-kpaMnRCLt3_SGNBIyWLfzHHB2QizLDGtDPMxfIyqUO9plQMk9MxkTmrRt5ITm-GGV9Zg1HqubyaY4zD6du5_E8oG4Pga2hECQZOj0UuUSRzXFzRff66di9PuPrTerAGh58-bWz-s0_S5Wm",
-    tags: ["protocols", "clinical", "humanitarian"]
-  },
-  {
-    id: "cnt-104",
-    title: "Building Resilient Peer Support Networks",
-    category: "Video",
-    language: "Ndebele",
-    description: "A modular video detailing peer mentorship schemes, safeguarding checkpoints, and setting healthy administrative boundaries.",
-    date: "Sept 28, 2024",
-    status: "Draft",
-    views: 45,
-    author: "Seke Health Hub",
-    imageUrl: "https://lh3.googleusercontent.com/aida-public/AB6AXuDOdgd4hodXu0-1NIeLDthKe5yjErBQCJbiFj_i5OAI0aA7EBIzi3InX1A6m3QMzqQeyKHIf-52H8T9KOSYyp_Zog0PVmK_1piUov4Bu_mRzU8ucOYYYoA2H9LTqEt6xeR67uJ3O-EbuugagrpZ73ASpDCX4UeEhKOUMJTlBYdsTo8If1CgUVMgowmliT_Hm24eZjnSlWdxkqerEPRKU_Dco3EXBRJSXS6-fNn48Ed4G3HIzBzcdE4rFw6qXSHECxo2sGt_X_pRz8il",
-    tags: ["community", "peer-to-peer", "safeguarding"]
-  }
-];
+const INITIAL_CONTENT: ContentItem[] = [];
 
 export default function AdminPortal({ onLogout }: AdminPortalProps) {
   const [activeTab, setActiveTab] = useState<"dashboard" | "content" | "analytics" | "settings">("dashboard");
-  const [contentList, setContentList] = useState<ContentItem[]>(INITIAL_CONTENT);
+  const [contentList, setContentList] = useState<ContentItem[]>(() => {
+    const saved = localStorage.getItem("moyo_admin_content");
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        // Exclude the old pre-populated mock IDs to keep their custom content completely pristine
+        return parsed.filter((item: ContentItem) => !["cnt-101", "cnt-102", "cnt-103", "cnt-104"].includes(item.id));
+      } catch (e) {
+        console.error(e);
+      }
+    }
+    return [];
+  });
+
+  // Firebase auth state
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(auth.currentUser);
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Sync to database and listen in real-time globally for all sessions (to prevent content losing on signouts)
+  useEffect(() => {
+    const path = "moyo_content";
+    const unsubscribe = onSnapshot(collection(db, path), (snapshot) => {
+      const items: ContentItem[] = [];
+      snapshot.forEach((docRef) => {
+        items.push(docRef.data() as ContentItem);
+      });
+      setContentList(items);
+    }, (error) => {
+      console.error("Firebase synchronizing error: ", error);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  // Keep local storage formatted
+  useEffect(() => {
+    localStorage.setItem("moyo_admin_content", JSON.stringify(contentList));
+  }, [contentList]);
+
+  // Real Google Sign in Triggers
+  const handleConnectGoogle = async () => {
+    try {
+      const provider = new GoogleAuthProvider();
+      await signInWithPopup(auth, provider);
+      showToast("Access token validated! Synchronized to firestore core.");
+    } catch (err: any) {
+      console.error(err);
+      alert(`Connection failed: ${err.message}`);
+    }
+  };
+
+  const handleDisconnectGoogle = async () => {
+    try {
+      await signOut(auth);
+      showToast("Closed secure Firestore admin session.");
+    } catch (err: any) {
+      console.error(err);
+    }
+  };
+
+  const triggerManualSeed = async () => {
+    let successCount = 0;
+    for (const item of INITIAL_CONTENT) {
+      try {
+        await setDoc(doc(db, "moyo_content", item.id), item);
+        successCount++;
+      } catch (err) {
+        console.error("Seeding item error: ", err);
+      }
+    }
+    showToast(`Seeded ${successCount}/${INITIAL_CONTENT.length} default articles live successfully!`);
+  };
   
   // Searching & Filtering
   const [searchQuery, setSearchQuery] = useState("");
@@ -133,6 +172,7 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
   const [formCategory, setFormCategory] = useState<"Article" | "Audio" | "Video" | "PDF">("Article");
   const [formLanguage, setFormLanguage] = useState<"English" | "Shona" | "Ndebele">("English");
   const [formDesc, setFormDesc] = useState("");
+  const [formBodyText, setFormBodyText] = useState("");
   const [formStatus, setFormStatus] = useState<"Published" | "Draft" | "Review">("Published");
   const [formTagsString, setFormTagsString] = useState("mentalhealth, community");
   const [formImageUrl, setFormImageUrl] = useState("");
@@ -211,22 +251,31 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
 
     if (isEditMode && editingId) {
       // Edit
-      setContentList(prev => prev.map(item => {
-        if (item.id === editingId) {
-          return {
-            ...item,
-            title: formTitle,
-            category: formCategory,
-            language: formLanguage,
-            description: formDesc,
-            status: formStatus,
-            tags: tagsArray,
-            imageUrl: formImageUrl || fallbackImages[formCategory]
-          };
-        }
-        return item;
-      }));
-      showToast("Content resource updated successfully!");
+      const existingItem = contentList.find(item => item.id === editingId);
+      const updatedItem: ContentItem = {
+        id: editingId,
+        title: formTitle,
+        category: formCategory,
+        language: formLanguage,
+        description: formDesc,
+        bodyText: formBodyText,
+        status: formStatus,
+        date: existingItem?.date || "Just now",
+        views: existingItem?.views || 0,
+        author: existingItem?.author || "Administrator Node",
+        tags: tagsArray,
+        imageUrl: formImageUrl || fallbackImages[formCategory]
+      };
+
+      setDoc(doc(db, "moyo_content", editingId), updatedItem)
+        .then(() => {
+          showToast("Content resource updated on live database!");
+        })
+        .catch((error) => {
+          console.error("Firebase update failed:", error);
+          showToast("Local edit saved, but Live sync failed. Ensure authenticated.");
+          setContentList(prev => prev.map(item => item.id === editingId ? updatedItem : item));
+        });
     } else {
       // Create
       const newId = `cnt-${Math.floor(105 + Math.random() * 900)}`;
@@ -236,6 +285,7 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
         category: formCategory,
         language: formLanguage,
         description: formDesc || "No overview statement provided.",
+        bodyText: formBodyText || formDesc,
         date: "Just now",
         status: formStatus,
         views: 0,
@@ -244,8 +294,15 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
         tags: tagsArray.length > 0 ? tagsArray : ["mentalhealth"]
       };
 
-      setContentList([newItem, ...contentList]);
-      showToast("New therapeutic content published live!");
+      setDoc(doc(db, "moyo_content", newId), newItem)
+        .then(() => {
+          showToast("New therapeutic content published live to Firebase!");
+        })
+        .catch((error) => {
+          console.error("Firebase create failed:", error);
+          showToast("Local creation saved. Live sync failed. Support permissions.");
+          setContentList([newItem, ...contentList]);
+        });
     }
 
     resetForm();
@@ -259,6 +316,7 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
     setFormCategory(item.category);
     setFormLanguage(item.language);
     setFormDesc(item.description);
+    setFormBodyText(item.bodyText || "");
     setFormStatus(item.status);
     setFormTagsString(item.tags.join(", "));
     setFormImageUrl(item.imageUrl || "");
@@ -268,8 +326,15 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
 
   const handleDeleteClick = (id: string, name: string) => {
     if (confirm(`Are you sure you want to delete "${name}"? This action is irreversible on the active CDN.`)) {
-      setContentList(prev => prev.filter(c => c.id !== id));
-      showToast(`Deleted content node: ${name}`);
+      deleteDoc(doc(db, "moyo_content", id))
+        .then(() => {
+          showToast(`Deleted from live database: ${name}`);
+        })
+        .catch((error) => {
+          console.error("Firebase delete failed:", error);
+          showToast("Local item cleared. Live database delete failed.");
+          setContentList(prev => prev.filter(c => c.id !== id));
+        });
     }
   };
 
@@ -280,13 +345,18 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
     setFormCategory("Article");
     setFormLanguage("English");
     setFormDesc("");
+    setFormBodyText("");
     setFormStatus("Published");
     setFormTagsString("mentalhealth, peer-help");
     setFileName(null);
     setFormImageUrl("");
   };
 
-  const totalContentCount = 1284 + (contentList.length - INITIAL_CONTENT.length);
+  const totalContentCount = contentList.length;
+  const articlesCount = contentList.filter(item => item.category === "Article").length;
+  const audioCount = contentList.filter(item => item.category === "Audio").length;
+  const videoPdfCount = contentList.filter(item => item.category === "Video" || item.category === "PDF").length;
+
   const filteredItems = contentList.filter(item => {
     const matchesSearch = item.title.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           item.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -322,7 +392,7 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
           <div className="space-y-6">
             <div className="flex items-center gap-3">
               <img 
-                src="https://lh3.googleusercontent.com/aida-public/AB6AXuBJyQWBkHsQWOYHyCy0X6uVyw4fXXgI10v770peXr5kUjeo8KnKJ6_P1r1eBBvgU3YzKluEWo3jEWVvDmhbMeA_0jnq4Cumkm3di82dQJ9QOfq6pUPyGSKCEEc3N0q21X5aBCccUCoK-AdnilK19GZc8iPXh1cooMyga_ZBIRApoPbYZeq0gL2L18-h5BYSyF4rnSWk4RBifBtvf-nrYON2rc5cmoVuN1NJmobMrISaCp0-ipuBanBPJZ3l0C8Gq06-0qSHlS-NVpWu" 
+                src="/src/assets/images/moyoconnect_logo_1779856207318.png" 
                 alt="MoyoConnect Logo" 
                 className="h-9 w-auto object-contain"
                 referrerPolicy="no-referrer"
@@ -412,6 +482,60 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
         {/* Action Panel / Primary Pages content */}
         <div className="flex-grow md:pl-64 flex flex-col min-h-screen">
           
+          {/* Live Sync Auth Banner */}
+          {!firebaseUser || firebaseUser.email !== "mjmatongo@africau.edu" ? (
+            <div className="bg-red-50 border-b border-red-200 px-6 py-4 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 animate-pulse" />
+                <div>
+                  <p className="text-xs font-bold text-red-900">
+                    Unauthenticated for Live Content database
+                  </p>
+                  <p className="text-[10px] text-red-700 font-medium">
+                    New items will remain local to your browser. Authenticate with Google holding the admin email (<strong>mjmatongo@africau.edu</strong>) to enable global live sync.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleConnectGoogle}
+                className="py-1.5 px-3 bg-red-600 text-white rounded-lg text-xs font-extrabold hover:bg-red-700 cursor-pointer flex items-center gap-2 transition-all shadow-sm active:scale-95 shrink-0"
+              >
+                <Globe className="w-3.5 h-3.5" /> Sign in with Google
+              </button>
+            </div>
+          ) : (
+            <div className="bg-emerald-50 border-b border-emerald-200 px-6 py-3 flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+                <div>
+                  <p className="text-xs font-bold text-emerald-950">
+                    Live Firestore Core Connected
+                  </p>
+                  <p className="text-[10px] text-emerald-800 font-medium">
+                    Synchronized to the database as <strong>{firebaseUser.email}</strong>. Articles edited here will instant-propagate to all devices.
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  type="button"
+                  onClick={triggerManualSeed}
+                  className="py-1 px-2.5 bg-white border border-emerald-300 text-emerald-800 rounded-md text-[9px] font-black hover:bg-emerald-100 cursor-pointer transition-all"
+                >
+                  Publish Base Seeds Live
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDisconnectGoogle}
+                  className="py-1 px-2.5 bg-emerald-700 text-white rounded-md text-[10px] font-black hover:bg-emerald-800 cursor-pointer transition-all"
+                >
+                  Disconnect
+                </button>
+              </div>
+            </div>
+          )}
+          
           {/* Header Bar */}
           <header className="h-16 border-b border-[#c2c7cc]/60 bg-white sticky top-0 z-30 px-6 md:px-10 flex items-center justify-between shadow-xs">
             <div className="flex items-center gap-2.5">
@@ -464,43 +588,52 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
                       <p className="text-3xl font-black text-[#002434] mt-1.5">{totalContentCount}</p>
                     </div>
                     <div className="text-[11px] text-[#386934] font-bold mt-4 flex items-center gap-1">
-                      12% monthly growth <ArrowUpRight className="w-3 h-3" />
+                      Live content channels <CheckCircle2 className="w-3" />
                     </div>
                   </div>
 
-                  {/* Stats 2: Completed linkage rate */}
-                  <div className="bg-white border border-[#c2c7cc] p-5 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden border-t-4 border-t-[#386934]">
+                  {/* Stats 2: Published Articles */}
+                  <div 
+                    onClick={() => { setActiveTab("content"); setCategoryFilter("Article"); }}
+                    className="bg-white border border-[#c2c7cc] p-5 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-[#386934]"
+                  >
                     <div>
-                      <Clock className="w-5 h-5 text-[#386934] mb-1.5" />
-                      <h3 className="text-xs font-extrabold text-[#72787c] uppercase tracking-wider">Referral Linkages</h3>
-                      <p className="text-3xl font-black text-[#386934] mt-1.5">88%</p>
+                      <FileText className="w-5 h-5 text-[#386934] mb-1.5" />
+                      <h3 className="text-xs font-extrabold text-[#72787c] uppercase tracking-wider">Articles Published</h3>
+                      <p className="text-3xl font-black text-[#386934] mt-1.5">{articlesCount}</p>
                     </div>
                     <div className="text-[11px] text-[#72787c] font-semibold mt-4">
-                      Seke Central clinic matching standard
+                      Active text-based resource sheets
                     </div>
                   </div>
 
-                  {/* Stats 3: Media count */}
-                  <div className="bg-white border border-[#c2c7cc] p-5 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden border-t-4 border-t-[#dd8d36]">
+                  {/* Stats 3: Audio Lessons */}
+                  <div 
+                    onClick={() => { setActiveTab("content"); setCategoryFilter("Audio"); }}
+                    className="bg-white border border-[#c2c7cc] p-5 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-[#dd8d36]"
+                  >
                     <div>
-                      <Play className="w-5 h-5 text-[#dd8d36] mb-1.5" />
-                      <h3 className="text-xs font-extrabold text-[#72787c] uppercase tracking-wider">Media Assets</h3>
-                      <p className="text-3xl font-black text-[#351b00] mt-1.5">642</p>
+                      <Volume2 className="w-5 h-5 text-[#dd8d36] mb-1.5" />
+                      <h3 className="text-xs font-extrabold text-[#72787c] uppercase tracking-wider">Audio Lessons</h3>
+                      <p className="text-3xl font-black text-[#351b00] mt-1.5">{audioCount}</p>
                     </div>
                     <div className="text-[11px] text-[#72787c] font-semibold mt-4">
-                      320 Audio • 322 Video guidelines
+                      Soundtracks & guidance recordings
                     </div>
                   </div>
 
-                  {/* Stats 4: Active Users */}
-                  <div className="bg-white border border-[#c2c7cc] p-5 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all relative overflow-hidden border-t-4 border-t-[#ba1a1a]">
+                  {/* Stats 4: Multimedia Videos/PDFs */}
+                  <div 
+                    onClick={() => { setActiveTab("content"); setCategoryFilter("Video"); }}
+                    className="bg-white border border-[#c2c7cc] p-5 rounded-2xl flex flex-col justify-between hover:shadow-md transition-all cursor-pointer relative overflow-hidden border-t-4 border-t-[#ba1a1a]"
+                  >
                     <div>
-                      <Users className="w-5 h-5 text-[#ba1a1a] mb-1.5" />
-                      <h3 className="text-xs font-extrabold text-[#72787c] uppercase tracking-wider">CHW Responders</h3>
-                      <p className="text-3xl font-black text-[#ba1a1a] mt-1.5">124</p>
+                      <Play className="w-5 h-5 text-[#ba1a1a] mb-1.5" />
+                      <h3 className="text-xs font-extrabold text-[#72787c] uppercase tracking-wider">Videos & PDFs</h3>
+                      <p className="text-3xl font-black text-[#ba1a1a] mt-1.5">{videoPdfCount}</p>
                     </div>
-                    <div className="text-[11px] text-[#ba1a1a] font-bold mt-4">
-                      12 operational districts actively online
+                    <div className="text-[11px] text-red-700 font-bold mt-4">
+                      Interactive video and system manuals
                     </div>
                   </div>
                 </div>
@@ -652,7 +785,7 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
                           <div key={item.id} className="py-3 flex items-center justify-between gap-4">
                             <div className="flex items-center gap-3">
                               <div className="w-10 h-10 rounded-lg overflow-hidden shrink-0 bg-[#f3f4f5] border border-[#c2c7cc]/50">
-                                <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                                <img src={getYouTubeThumb(item.imageUrl) || item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
                               </div>
                               <div className="min-w-0">
                                 <span className="block text-xs font-bold text-[#191c1d] truncate max-w-[240px] md:max-w-md">
@@ -785,7 +918,7 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
                         {/* Upper image and metadata */}
                         <div>
                           <div className="h-44 overflow-hidden bg-[#edeeef] relative border-b border-[#c2c7cc]/50">
-                            <img src={item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
+                            <img src={getYouTubeThumb(item.imageUrl) || item.imageUrl} alt={item.title} className="w-full h-full object-cover" />
                             
                             {/* Status and category badge overlays */}
                             <div className="absolute top-3 left-3 flex gap-1.5">
@@ -1243,11 +1376,23 @@ export default function AdminPortal({ onLogout }: AdminPortalProps) {
                   <div className="flex flex-col gap-1">
                     <label className="text-xs font-bold text-[#191c1d]">Resource Summary Statement</label>
                     <textarea 
-                      rows={4}
+                      rows={2}
                       value={formDesc}
                       onChange={(e) => setFormDesc(e.target.value)}
                       placeholder="Write a clear details outline of whom this cognitive strategy assists and key checkpoints..."
                       className="w-full bg-[#f8f9fa] border border-[#c2c7cc] rounded-lg text-xs p-3 outline-none focus:ring-1 focus:ring-[#002434] text-[#191c1d] resize-none"
+                    />
+                  </div>
+
+                  {/* Body text / Article Content */}
+                  <div className="flex flex-col gap-1">
+                    <label className="text-xs font-bold text-[#191c1d]">Full Body Content / Resource Text / Transcript</label>
+                    <textarea 
+                      rows={6}
+                      value={formBodyText}
+                      onChange={(e) => setFormBodyText(e.target.value)}
+                      placeholder="Enter the full article body, audio session transcript, or modular lessons text..."
+                      className="w-full bg-[#f8f9fa] border border-[#c2c7cc] rounded-lg text-xs p-3 outline-none focus:ring-1 focus:ring-[#002434] text-[#191c1d]"
                     />
                   </div>
 

@@ -18,6 +18,15 @@ import {
   AlertCircle
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
+import { auth, db } from "../firebase";
+import { 
+  signInWithEmailAndPassword, 
+  createUserWithEmailAndPassword, 
+  updateProfile, 
+  signInWithPopup, 
+  GoogleAuthProvider 
+} from "firebase/auth";
+import { doc, setDoc } from "firebase/firestore";
 
 interface LoginProps {
   onLoginSuccess: (role: "patient" | "chw" | "admin", identifier: string) => void;
@@ -256,7 +265,7 @@ export default function Login({ onLoginSuccess, initialLanguage, onLanguageChang
     onLanguageChange(lang);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!identifier.trim() || password.length < 4) {
       setErrorMsg(dict.formError[activeLang]);
@@ -265,55 +274,94 @@ export default function Login({ onLoginSuccess, initialLanguage, onLanguageChang
     setErrorMsg("");
     setIsSubmitting(true);
 
-    // Simulate mild network latency
-    setTimeout(() => {
-      setIsSubmitting(false);
-
-      if (activeTab === "patient") {
-        // Look up registered accounts in localStorage
+    if (activeTab === "patient") {
+      try {
+        // Real Firebase Authentication Sign-In
+        const userCredential = await signInWithEmailAndPassword(auth, identifier.trim().toLowerCase(), password);
+        const user = userCredential.user;
+        setIsSubmitting(false);
+        onLoginSuccess("patient", user.displayName || user.email?.split("@")[0] || "Patient");
+      } catch (authErr: any) {
+        console.warn("Firebase Auth sign-in failed, trying local fallback", authErr);
+        
+        // Scan locally registered backup users in localStorage for seamless backward compatibility
         const savedJSON = localStorage.getItem("registered_moyo_users");
+        let fallbackMatched = false;
         if (savedJSON) {
           try {
             const users = JSON.parse(savedJSON) as any[];
             const matched = users.find(u => u.email.toLowerCase() === identifier.trim().toLowerCase());
             if (matched) {
-              if (matched.password !== password) {
+              if (matched.password === password) {
+                fallbackMatched = true;
+                setIsSubmitting(false);
+                onLoginSuccess("patient", matched.name);
+                return;
+              } else {
                 setErrorMsg(activeLang === "en" ? "Incorrect password. Please try again." : "Svomhu yekupinda haina kururama.");
+                setIsSubmitting(false);
                 return;
               }
-              // Successfully authenticate with full-name greeter
-              onLoginSuccess("patient", matched.name);
-              return;
             }
-          } catch (err) {
-            console.error(err);
+          } catch (e) {
+            console.error(e);
           }
         }
 
-        // Fast-bypass / Guest log in if it's a valid looking email
-        if (identifier.includes("@")) {
-          onLoginSuccess("patient", identifier.split("@")[0]);
-        } else {
-          setErrorMsg(activeLang === "en" 
-            ? "Account not registered. Please click 'Register now' below to complete your intake questionnaire and entry credentials." 
-            : "Akaundi haisati yanyorwa. Ndapota dzvanyai 'Register now' kuti upindure mibvunzo yepfungwa."
-          );
+        setIsSubmitting(false);
+        if (!fallbackMatched) {
+          let friendlyMsg = authErr.message;
+          if (authErr.code === "auth/invalid-credential" || authErr.code === "auth/user-not-found" || authErr.code === "auth/wrong-password") {
+            friendlyMsg = activeLang === "en" 
+              ? "Incorrect email or password. Please verify your credentials and try again." 
+              : "Imeyiri kana svomhu yekupinda haina kururama.";
+          } else if (authErr.code === "auth/operation-not-allowed") {
+            friendlyMsg = "Email/password authentication is currently disabled in your Firebase Console. Please verify with Administrator.";
+          }
+          setErrorMsg(friendlyMsg);
         }
-      } else {
-        // CHW login logic
-        onLoginSuccess("chw", identifier.trim());
       }
-    }, 900);
+    } else {
+      // CHW staff identifier login flow (local staff validation bypass)
+      setTimeout(() => {
+        setIsSubmitting(false);
+        onLoginSuccess("chw", identifier.trim());
+      }, 600);
+    }
   };
 
-  const handleGoogleSignIn = () => {
+  const handleGoogleSignIn = async () => {
     setIsGoogleSubmitting(true);
     setErrorMsg("");
 
-    setTimeout(() => {
+    try {
+      const provider = new GoogleAuthProvider();
+      const result = await signInWithPopup(auth, provider);
+      const user = result.user;
+      
+      // Auto-register user stats structure in firestore if not exists
+      const userDocRef = doc(db, "registered_moyo_users", user.uid);
+      const intakeAnswers = localStorage.getItem("moyo_current_questionnaire");
+      const savedAnswers = intakeAnswers ? JSON.parse(intakeAnswers) : { mood: 0, anxiety: 0 };
+      
+      const userProfile = {
+        uid: user.uid,
+        name: user.displayName || user.email?.split("@")[0] || "Secure Google User",
+        email: user.email || "",
+        language: activeLang,
+        timestamp: new Date().toISOString(),
+        assessmentAnswers: savedAnswers
+      };
+
+      await setDoc(userDocRef, userProfile, { merge: true });
+
       setIsGoogleSubmitting(false);
-      onLoginSuccess("patient", "Secure Google User");
-    }, 1100);
+      onLoginSuccess("patient", userProfile.name);
+    } catch (err: any) {
+      console.error("Google Auth error", err);
+      setIsGoogleSubmitting(false);
+      setErrorMsg(err.message || "Google Sign-In failed. Please verify configuration.");
+    }
   };
 
   // Switch views safely
@@ -382,7 +430,7 @@ export default function Login({ onLoginSuccess, initialLanguage, onLanguageChang
     }));
   };
 
-  const handleNextQuestion = () => {
+  const handleNextQuestion = async () => {
     const activeQuestion = QUESTIONS[currentQuestionIndex];
     if (questionnaireAnswers[activeQuestion.id] === undefined) {
       alert(activeLang === "en" ? "Please select a response to continue." : "Ndapota sarudzai mhinduro kuti muenderere mberi.");
@@ -392,27 +440,71 @@ export default function Login({ onLoginSuccess, initialLanguage, onLanguageChang
     if (currentQuestionIndex < QUESTIONS.length - 1) {
       setCurrentQuestionIndex(prev => prev + 1);
     } else {
-      // Save user to localStorage
-      const newUser = {
-        name: regName.trim(),
-        email: regEmail.trim().toLowerCase(),
-        password: regPassword,
-        language: activeLang,
-        timestamp: new Date().toISOString(),
-        assessmentAnswers: questionnaireAnswers
-      };
-
-      const savedJSON = localStorage.getItem("registered_moyo_users") || "[]";
+      setIsSubmitting(true);
+      setErrorMsg("");
       try {
-        const users = JSON.parse(savedJSON) as any[];
-        users.push(newUser);
-        localStorage.setItem("registered_moyo_users", JSON.stringify(users));
-        localStorage.setItem("moyo_current_questionnaire", JSON.stringify(questionnaireAnswers));
-      } catch (e) {
-        console.error(e);
-      }
+        // Create user with Firebase Auth
+        const userCredential = await createUserWithEmailAndPassword(auth, regEmail.trim().toLowerCase(), regPassword);
+        const user = userCredential.user;
 
-      setView("success");
+        // Set Display Name in Auth Profile
+        await updateProfile(user, { displayName: regName.trim() });
+
+        // Build User Profile document
+        const userDoc = {
+          uid: user.uid,
+          name: regName.trim(),
+          email: regEmail.trim().toLowerCase(),
+          language: activeLang,
+          timestamp: new Date().toISOString(),
+          assessmentAnswers: questionnaireAnswers
+        };
+
+        // Write user profile to Firestore
+        await setDoc(doc(db, "registered_moyo_users", user.uid), userDoc);
+
+        // Save to Backup local storage for local offline redundancy or secondary lookups
+        const savedJSON = localStorage.getItem("registered_moyo_users") || "[]";
+        try {
+          const users = JSON.parse(savedJSON) as any[];
+          // remove any old local user with same email
+          const filtered = users.filter((u: any) => u.email.toLowerCase() !== regEmail.trim().toLowerCase());
+          filtered.push({
+            name: regName.trim(),
+            email: regEmail.trim().toLowerCase(),
+            password: regPassword,
+            language: activeLang,
+            timestamp: new Date().toISOString(),
+            assessmentAnswers: questionnaireAnswers
+          });
+          localStorage.setItem("registered_moyo_users", JSON.stringify(filtered));
+          localStorage.setItem("moyo_current_questionnaire", JSON.stringify(questionnaireAnswers));
+        } catch (localErr) {
+          console.error("Local storage sync warning", localErr);
+        }
+
+        setIsSubmitting(false);
+        setView("success");
+      } catch (authErr: any) {
+        console.error("Firebase Auth signup failed", authErr);
+        setIsSubmitting(false);
+        let friendlyMsg = authErr.message;
+        if (authErr.code === "auth/email-already-in-use") {
+          friendlyMsg = activeLang === "en" 
+            ? "This email is already registered on MoyoConnect. Please try logging in." 
+            : "Kero yeimeyiri iyi yakatoshandiswa mune imwe akaundi.";
+        } else if (authErr.code === "auth/weak-password") {
+          friendlyMsg = activeLang === "en" 
+            ? "Your password is too weak. Please choose a password with at least 6 characters." 
+            : "Svomhu yekupinda haina kusimba zvakakodzera. Ndapota shandisai dzinopfuura nhamba 6.";
+        } else if (authErr.code === "auth/operation-not-allowed") {
+          friendlyMsg = "Email/Password registration is not enabled in your Firebase account credentials configuration.";
+        }
+        setErrorMsg(friendlyMsg);
+        
+        // Go back to Registration screen so they can retry or use a different email/password!
+        setView("register");
+      }
     }
   };
 
@@ -484,7 +576,7 @@ export default function Login({ onLoginSuccess, initialLanguage, onLanguageChang
         <header className="flex flex-col items-center text-center gap-2">
           <div className="w-24 h-18 mb-1 flex items-center justify-center">
             <img
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuBJyQWBkHsQWOYHyCy0X6uVyw4fXXgI10v770peXr5kUjeo8KnKJ6_P1r1eBBvgU3YzKluEWo3jEWVvDmhbMeA_0jnq4Cumkm3di82dQJ9QOfq6pUPyGSKCEEc3N0q21X5aBCccUCoK-AdnilK19GZc8iPXh1cooMyga_ZBIRApoPbYZeq0gL2L18-h5BYSyF4rnSWk4RBifBtvf-nrYON2rc5cmoVuN1NJmobMrISaCp0-ipuBanBPJZ3l0C8Gq06-0qSHlS-NVpWu"
+              src="/src/assets/images/moyoconnect_logo_1779856207318.png"
               alt="MoyoConnect Logo"
               className="h-full w-auto object-contain"
               referrerPolicy="no-referrer"

@@ -1,0 +1,74 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Helper Functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-+%]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && (request.auth.token.email == 'mjmatongo@africau.edu' || request.auth.token.email.endsWith('@africau.edu'));
+    }
+
+    // 3. Validation Helper for ContentItem
+    function isValidContentItem(data) {
+      return data.id is string && data.id.size() <= 128
+        && data.title is string && data.title.size() <= 300
+        && data.category is string && (data.category == 'Article' || data.category == 'Audio' || data.category == 'Video' || data.category == 'PDF')
+        && data.language is string && (data.language == 'English' || data.language == 'Shona' || data.language == 'Ndebele')
+        && data.description is string && data.description.size() <= 2000
+        && data.status is string && (data.status == 'Published' || data.status == 'Draft' || data.status == 'Review')
+        && data.views is int && data.views >= 0
+        && data.author is string && data.author.size() <= 128
+        && (!('bodyText' in data) || (data.bodyText is string && data.bodyText.size() <= 50000))
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 2083))
+        && (!('tags' in data) || (data.tags is list && data.tags.size() <= 15));
+    }
+
+    // 4. Moyo Content Collection Rules
+    match /moyo_content/{contentId} {
+      allow get: if existing().status == 'Published' || isAdmin();
+      allow list: if resource.data.status == 'Published' || isAdmin();
+
+      allow create: if isAdmin()
+        && isValidId(contentId)
+        && incoming().id == contentId
+        && isValidContentItem(incoming());
+
+      allow update: if isAdmin()
+        && isValidContentItem(incoming())
+        && incoming().id == existing().id;
+
+      allow delete: if isAdmin();
+    }
+
+    // 5. Patient Intake and User Profile collection rules
+    match /registered_moyo_users/{userId} {
+      allow read, write: if true;
+    }
+
+    // 6. CHW Clinical Case Directory rules
+    match /moyo_clients/{clientId} {
+      allow read, write: if true;
+    }
+  }
+}

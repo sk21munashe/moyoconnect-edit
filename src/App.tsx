@@ -172,9 +172,12 @@ export default function App() {
             onClick={handleBackToHome}
             className="flex items-center gap-2 cursor-pointer group"
           >
-            <div className="w-8 h-8 rounded-full bg-moyo-primary flex items-center justify-center text-white shrink-0 shadow-sm font-black text-sm">
-              M
-            </div>
+            <img 
+              src="/src/assets/images/moyoconnect_logo_1779856207318.png" 
+              alt="MoyoConnect Logo" 
+              className="h-9 w-auto object-contain"
+              referrerPolicy="no-referrer"
+            />
             <h1 className="text-xl font-display font-extrabold text-moyo-primary tracking-tight transition-colors group-hover:text-moyo-secondary">
               MoyoConnect
             </h1>
@@ -726,12 +729,12 @@ export default function App() {
           <button
             onClick={() => {
               setActiveScreen("modules");
-              if (activeModule === "none") {
-                // Keep same or assign
+              if (activeModule === "chat" || activeModule === "none") {
+                setActiveModule("none");
               }
             }}
             className={`flex flex-col items-center justify-center rounded-2xl py-1.5 px-4 transition-all cursor-pointer ${
-              activeScreen === "modules"
+              activeScreen === "modules" && activeModule !== "chat"
                 ? "bg-moyo-secondary-container text-moyo-on-secondary-container scale-105 font-bold"
                 : "text-moyo-muted hover:bg-moyo-bg"
             }`}
@@ -739,6 +742,31 @@ export default function App() {
             <Grid2X2 className="w-5 h-5" />
             <span className="text-[10.5px] mt-1">Modules</span>
           </button>
+
+          {/* Standout Tab: Chat Support */}
+          <div className="relative flex flex-col items-center justify-center px-2">
+            <button
+              onClick={() => {
+                setActiveScreen("modules");
+                setActiveModule("chat");
+              }}
+              className={`flex items-center justify-center w-12 h-12 rounded-full transition-all shadow-md active:scale-95 cursor-pointer z-40 -mt-5 ${
+                activeScreen === "modules" && activeModule === "chat"
+                  ? "bg-moyo-secondary text-white ring-4 ring-moyo-secondary-container scale-110 shadow-emerald-700/30 shadow-lg"
+                  : "bg-moyo-primary text-[#b6eeab] hover:bg-moyo-primary-container ring-2 ring-[#b6eeab]/35 shadow-moyo-primary/20 shadow-lg hover:scale-105"
+              }`}
+              title="Chat with Moyo Care AI Helper"
+            >
+              <MessageSquare className="w-5 h-5" />
+            </button>
+            <span className={`text-[9.5px] font-extrabold mt-1 uppercase tracking-wider ${
+              activeScreen === "modules" && activeModule === "chat"
+                ? "text-moyo-secondary font-black"
+                : "text-moyo-muted"
+            }`}>
+              Chat
+            </span>
+          </div>
 
           {/* Tab: Support */}
           <button
