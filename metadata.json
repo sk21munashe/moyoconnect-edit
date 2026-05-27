@@ -1,0 +1,6 @@
+{
+  "name": "MoyoConnect",
+  "description": "Anonymous, culturally adapted mental health support platform for Zimbabwe, providing screeners, journaling, support chat, and CBT tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

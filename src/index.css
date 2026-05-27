@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=Public+Sans:wght@400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Manrope", sans-serif;
+  --font-sans: "Public Sans", sans-serif;
+  
+  --color-moyo-bg: #f8f9fa;
+  --color-moyo-primary: #002434;
+  --color-moyo-primary-container: #1a3a4a;
+  --color-moyo-secondary: #386934;
+  --color-moyo-secondary-container: #b6eeab;
+  --color-moyo-on-secondary-container: #3c6e37;
+  --color-moyo-tertiary: #532d00;
+  --color-moyo-on-tertiary-container: #dd8d36;
+  --color-moyo-error: #ba1a1a;
+  --color-moyo-error-container: #ffdad6;
+  --color-moyo-dark: #191c1d;
+  --color-moyo-muted: #42474b;
+  --color-moyo-border: #c2c7cc;
+}
+
+@layer base {
+  body {
+    @apply bg-moyo-bg text-moyo-dark font-sans;
+  }
+}
+
+/* Custom transitions and scrollbar-hiding */
+.hide-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.hide-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.pulsate-breath {
+  animation: breath 6s ease-in-out infinite;
+}
+
+@keyframes breath {
+  0%, 100% {
+    transform: scale(0.92);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 1;
+  }
+}
+
